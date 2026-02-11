@@ -88,6 +88,18 @@ export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): P
     }
   }
 
+  // Patch config to allow insecure auth (skips device pairing).
+  // CF Access authenticates users before requests reach the gateway,
+  // so device pairing is redundant. We patch via exec to ensure it's
+  // set even if the container image has an older start-openclaw.sh.
+  try {
+    await sandbox.exec(
+      `node -e "const fs=require('fs'),p='/root/.openclaw/openclaw.json';try{const c=JSON.parse(fs.readFileSync(p,'utf8'));c.gateway=c.gateway||{};c.gateway.controlUi=c.gateway.controlUi||{};c.gateway.controlUi.allowInsecureAuth=true;fs.writeFileSync(p,JSON.stringify(c,null,2));console.log('Patched allowInsecureAuth')}catch(e){console.log('Config not yet created, will be patched by startup script')}"`,
+    );
+  } catch (e) {
+    console.log('Config patch skipped (config may not exist yet):', e);
+  }
+
   // Start a new OpenClaw gateway
   console.log('Starting new OpenClaw gateway...');
   const envVars = buildEnvVars(env);

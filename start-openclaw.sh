@@ -164,10 +164,13 @@ if (process.env.OPENCLAW_GATEWAY_TOKEN) {
     config.gateway.auth.token = process.env.OPENCLAW_GATEWAY_TOKEN;
 }
 
-if (process.env.OPENCLAW_DEV_MODE === 'true') {
-    config.gateway.controlUi = config.gateway.controlUi || {};
-    config.gateway.controlUi.allowInsecureAuth = true;
-}
+// Allow Control UI without device pairing when behind Cloudflare Access.
+// CF Access already authenticates users before requests reach the Worker,
+// so device pairing is redundant for the web dashboard.
+// In DEV_MODE this was already enabled; we now enable it for all deployments
+// since the Worker enforces CF Access auth on all routes.
+config.gateway.controlUi = config.gateway.controlUi || {};
+config.gateway.controlUi.allowInsecureAuth = true;
 
 // Legacy AI Gateway base URL override:
 // ANTHROPIC_BASE_URL is picked up natively by the Anthropic SDK,

@@ -286,18 +286,8 @@ app.all('*', async (c) => {
       console.log('[WS] URL:', url.pathname + redactedSearch);
     }
 
-    // Inject gateway token into WebSocket request if not already present.
-    // CF Access redirects strip query params, so authenticated users lose ?token=.
-    // Since the user already passed CF Access auth, we inject the token server-side.
-    let wsRequest = request;
-    if (c.env.MOLTBOT_GATEWAY_TOKEN && !url.searchParams.has('token')) {
-      const tokenUrl = new URL(url.toString());
-      tokenUrl.searchParams.set('token', c.env.MOLTBOT_GATEWAY_TOKEN);
-      wsRequest = new Request(tokenUrl.toString(), request);
-    }
-
     // Get WebSocket connection to the container
-    const containerResponse = await sandbox.wsConnect(wsRequest, MOLTBOT_PORT);
+    const containerResponse = await sandbox.wsConnect(request, MOLTBOT_PORT);
     console.log('[WS] wsConnect response status:', containerResponse.status);
 
     // Get the container-side WebSocket
@@ -324,7 +314,12 @@ app.all('*', async (c) => {
       console.log('[WS] serverWs.readyState:', serverWs.readyState);
     }
 
-    // Relay messages from client to container
+    // Relay messages from client to container, injecting gateway token into
+    // the first "connect" frame. OpenClaw reads the token from the WebSocket
+    // connect message (params.auth.token), not from the HTTP upgrade URL.
+    // Since CF Access strips ?token= from the browser URL, we inject it
+    // server-side into the protocol-level handshake.
+    let firstMessage = true;
     serverWs.addEventListener('message', (event) => {
       if (debugLogs) {
         console.log(
@@ -333,8 +328,33 @@ app.all('*', async (c) => {
           typeof event.data === 'string' ? event.data.slice(0, 200) : '(binary)',
         );
       }
+      let data = event.data;
+      if (firstMessage && c.env.MOLTBOT_GATEWAY_TOKEN && typeof data === 'string') {
+        firstMessage = false;
+        try {
+          const frame = JSON.parse(data);
+          if (frame.method === 'connect' && frame.params) {
+            frame.params.auth = frame.params.auth || {};
+            if (!frame.params.auth.token) {
+              frame.params.auth.token = c.env.MOLTBOT_GATEWAY_TOKEN;
+            }
+            // Strip device identity so the gateway skips device signature
+            // validation. With allowInsecureAuth enabled, token-only auth
+            // is sufficient. CF Access already authenticates the user.
+            delete frame.params.device;
+            data = JSON.stringify(frame);
+            if (debugLogs) {
+              console.log('[WS] Patched connect frame: injected token, stripped device');
+            }
+          }
+        } catch {
+          // Not JSON or not a connect frame — pass through as-is
+        }
+      } else if (firstMessage) {
+        firstMessage = false;
+      }
       if (containerWs.readyState === WebSocket.OPEN) {
-        containerWs.send(event.data);
+        containerWs.send(data);
       } else if (debugLogs) {
         console.log('[WS] Container not open, readyState:', containerWs.readyState);
       }
