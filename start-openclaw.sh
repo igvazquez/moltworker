@@ -265,6 +265,68 @@ console.log('Configuration patched successfully');
 EOFPATCH
 
 # ============================================================
+# SEED CRON JOBS (idempotent — only if no jobs exist yet)
+# ============================================================
+CRON_DIR="$CONFIG_DIR/cron"
+CRON_FILE="$CRON_DIR/jobs.json"
+if [ -n "$TELEGRAM_USER_ID" ]; then
+    if [ ! -f "$CRON_FILE" ] || [ "$(node -e "const j=JSON.parse(require('fs').readFileSync('$CRON_FILE','utf8'));console.log((j.jobs||[]).length)" 2>/dev/null)" = "0" ]; then
+        echo "Seeding cron jobs..."
+        mkdir -p "$CRON_DIR"
+        node << EOFCRON
+const fs = require('fs');
+const cronPath = '$CRON_DIR/jobs.json';
+const telegramUserId = '${TELEGRAM_USER_ID}';
+const now = Date.now();
+const jobs = {
+  jobs: [
+    {
+      id: "seed-morning-briefing",
+      name: "morning-briefing",
+      description: "Daily morning briefing at 9 AM Buenos Aires time",
+      enabled: true,
+      createdAtMs: now,
+      updatedAtMs: now,
+      schedule: { kind: "cron", expr: "0 9 * * *", tz: "America/Argentina/Buenos_Aires" },
+      sessionTarget: "isolated",
+      wakeMode: "now",
+      payload: {
+        kind: "agentTurn",
+        message: "Good morning Igna! Give a brief morning briefing: 1) Remind me of any pending tasks or ideas I mentioned recently. 2) If there is something I was learning or working on, give a one-line status. 3) Keep it under 5 lines. If nothing notable, just say good morning."
+      },
+      delivery: { mode: "announce", channel: "telegram", to: telegramUserId },
+      state: {}
+    },
+    {
+      id: "seed-evening-recap",
+      name: "evening-recap",
+      description: "Daily evening recap at 9 PM Buenos Aires time",
+      enabled: true,
+      createdAtMs: now,
+      updatedAtMs: now,
+      schedule: { kind: "cron", expr: "0 21 * * *", tz: "America/Argentina/Buenos_Aires" },
+      sessionTarget: "isolated",
+      wakeMode: "now",
+      payload: {
+        kind: "agentTurn",
+        message: "Hey Igna, quick end-of-day recap: 1) Summarize what we talked about today. 2) Note anything I should remember or follow up on. 3) Update MEMORY.md with anything new I learned. 4) Keep it under 4 lines. If quiet day, just say goodnight."
+      },
+      delivery: { mode: "announce", channel: "telegram", to: telegramUserId },
+      state: {}
+    }
+  ]
+};
+fs.writeFileSync(cronPath, JSON.stringify(jobs, null, 2));
+console.log('Seeded ' + jobs.jobs.length + ' cron jobs for Telegram user ' + telegramUserId);
+EOFCRON
+    else
+        echo "Cron jobs already exist, skipping seed"
+    fi
+else
+    echo "TELEGRAM_USER_ID not set, skipping cron seed"
+fi
+
+# ============================================================
 # BACKGROUND SYNC LOOP
 # ============================================================
 if r2_configured; then
